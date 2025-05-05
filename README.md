@@ -21,6 +21,7 @@ This GitHub Action automatically generates a changelog based on all the [Convent
 - Will not mess up with any header or instructions you already have at the top of your CHANGELOG.md.
 - Will not add duplicate version changes if it already exists in the CHANGELOG.md file.
 - Optionally exclude types from the CHANGELOG. (default: `build,docs,other,style`)
+- Supports both standard conventional commits (`feat(deps): message here`) and prefix-formatted conventional commits (`COH-123/feat(deps): message here`)
 
 ## Example Workflows
 
@@ -141,3 +142,24 @@ jobs:
 ## :warning: Important :warning:
 
 You must already have 2 tags in your repository (1 previous tag + the current latest tag triggering the job). The job will exit with an error if it can't find the previous tag!
+
+## Supported Commit Formats
+
+This action supports two formats for commit messages:
+
+1. Standard Conventional Commits format:
+   ```
+   feat(scope): message here
+   fix: message here
+   chore(deps): message here
+   ```
+
+2. Prefix-formatted Conventional Commits:
+   ```
+   COH-123/feat(scope): message here
+   JIRA-456/fix: message here
+   ABC-789/chore(deps): message here
+   ```
+
+The prefix format allows you to include ticket/issue references directly in your commit messages while still maintaining compatibility with the conventional commits specification. The prefix should follow the pattern `XXX-000/` where `XXX` is your project code and `000` is the issue number.
+

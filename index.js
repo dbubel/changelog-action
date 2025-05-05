@@ -172,7 +172,20 @@ async function main () {
   const breakingChanges = []
   for (const commit of commits) {
     try {
-      const cAst = cc.toConventionalChangelogFormat(cc.parser(commit.commit.message))
+      // Check if the commit message matches the COH-123/feat(deps): pattern
+      const cohRegex = /^([A-Z]+-\d+)\/([a-z]+)(\([^)]*\))?:\s(.+)$/;
+      let message = commit.commit.message;
+      const cohMatch = message.match(cohRegex);
+
+      // If it matches our COH-123/feat(deps): pattern, transform it to conventional commit format
+      if (cohMatch) {
+        const [, issueRef, type, scope = '', subject] = cohMatch;
+        // Transform to conventional commit format by removing the issue prefix
+        message = `${type}${scope}: ${subject}`;
+        core.info(`[INFO] Transformed commit format from ${commit.commit.message} to ${message}`);
+      }
+
+      const cAst = cc.toConventionalChangelogFormat(cc.parser(message));
       commitsParsed.push({
         ...cAst,
         type: cAst.type.toLowerCase(),
@@ -414,3 +427,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 }
 
 main()
+
