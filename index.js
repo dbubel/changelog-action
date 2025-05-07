@@ -24,22 +24,26 @@ const allTypes = [
 const rePrId = /#([0-9]+)/g
 const rePrEnding = /\(#([0-9]+)\)$/
 
-function buildSubject ({ writeToFile, subject, author, authorUrl, owner, repo }) {
+function buildSubject ({ writeToFile, subject, author, authorUrl, owner, repo, ticketReference }) {
   const hasPR = rePrEnding.test(subject)
   const prs = []
   let output = subject
+  // If ticketReference exists, prepend it to the subject
+  if (ticketReference) {
+    output = `[${ticketReference}] ${output}`
+  }
   if (writeToFile) {
     const authorLine = author ? ` by [@${author}](${authorUrl})` : ''
     if (hasPR) {
       const prMatch = subject.match(rePrEnding)
       const msgOnly = subject.slice(0, prMatch[0].length * -1)
-      output = msgOnly.replace(rePrId, (m, prId) => {
+      output = (ticketReference ? `[${ticketReference}] ` : '') + msgOnly.replace(rePrId, (m, prId) => {
         prs.push(prId)
         return `[#${prId}](${githubServerUrl}/${owner}/${repo}/pull/${prId})`
       })
       output += `*(PR [#${prMatch[1]}](${githubServerUrl}/${owner}/${repo}/pull/${prMatch[1]})${authorLine})*`
     } else {
-      output = subject.replace(rePrId, (m, prId) => {
+      output = (ticketReference ? `[${ticketReference}] ` : '') + subject.replace(rePrId, (m, prId) => {
         return `[#${prId}](${githubServerUrl}/${owner}/${repo}/pull/${prId})`
       })
       if (author) {
@@ -48,12 +52,19 @@ function buildSubject ({ writeToFile, subject, author, authorUrl, owner, repo })
     }
   } else {
     if (hasPR) {
+      // Handle the non-file output case
       output = subject.replace(rePrEnding, (m, prId) => {
         prs.push(prId)
-        return author ? `*(PR #${prId} by @${author})*` : `*(PR #${prId})*`
+        const prOutput = author ? `*(PR #${prId} by @${author})*` : `*(PR #${prId})*`
+        return prOutput
       })
+      if (ticketReference) {
+        output = `[${ticketReference}] ${output}`
+      }
     } else {
-      output = author ? `${subject} *(commit by @${author})*` : subject
+      // If no PR ending, just handle author and ticket reference
+      let authorOutput = author ? ` *(commit by @${author})*` : ''
+      output = (ticketReference ? `[${ticketReference}] ${subject}${authorOutput}` : `${subject}${authorOutput}`)
     }
   }
   return {
@@ -176,11 +187,14 @@ async function main () {
       const cohRegex = /^([A-Z]+-\d+)\/([a-z]+)(\([^)]*\))?:\s(.+)$/;
       let message = commit.commit.message;
       const cohMatch = message.match(cohRegex);
+      let ticketReference = null;
 
       // If it matches our COH-123/feat(deps): pattern, transform it to conventional commit format
       if (cohMatch) {
         const [, issueRef, type, scope = '', subject] = cohMatch;
-        // Transform to conventional commit format by removing the issue prefix
+        // Store the ticket reference
+        ticketReference = issueRef;
+        // Transform to conventional commit format by removing the issue prefix but keep the reference internally
         message = `${type}${scope}: ${subject}`;
         core.info(`[INFO] Transformed commit format from ${commit.commit.message} to ${message}`);
       }
@@ -192,7 +206,8 @@ async function main () {
         sha: commit.sha,
         url: commit.html_url,
         author: _.get(commit, 'author.login'),
-        authorUrl: _.get(commit, 'author.html_url')
+        authorUrl: _.get(commit, 'author.html_url'),
+        ticketReference // Store the ticket reference
       })
       for (const note of cAst.notes) {
         if (note.title === 'BREAKING CHANGE') {
@@ -202,20 +217,33 @@ async function main () {
             subject: cAst.subject,
             author: _.get(commit, 'author.login'),
             authorUrl: _.get(commit, 'author.html_url'),
-            text: note.text
+            text: note.text,
+            ticketReference // Include ticketReference for breaking changes
           })
         }
       }
       core.info(`[OK] Commit ${commit.sha} of type ${cAst.type} - ${cAst.subject}`)
     } catch (err) {
       if (includeInvalidCommits) {
+        // Even for invalid commits, check if it follows our ticket reference pattern
+        const cohRegex = /^([A-Z]+-\d+)\/(.+)$/;
+        const originalMessage = commit.commit.message;
+        const cohMatch = originalMessage.match(cohRegex);
+        let ticketReference = null;
+        
+        if (cohMatch) {
+          // Extract ticket reference even for invalid conventional commit format
+          ticketReference = cohMatch[1];
+        }
+        
         commitsParsed.push({
           type: 'other',
           subject: commit.commit.message,
           sha: commit.sha,
           url: commit.html_url,
           author: _.get(commit, 'author.login'),
-          authorUrl: _.get(commit, 'author.html_url')
+          authorUrl: _.get(commit, 'author.html_url'),
+          ticketReference
         })
         core.info(`[OK] Commit ${commit.sha} with invalid type, falling back to other - ${commit.commit.message}`)
       } else {
@@ -250,7 +278,8 @@ async function main () {
         author: breakChange.author,
         authorUrl: breakChange.authorUrl,
         owner,
-        repo
+        repo,
+        ticketReference: breakChange.ticketReference
       })
       const subjectVar = buildSubject({
         writeToFile: false,
@@ -258,7 +287,8 @@ async function main () {
         author: breakChange.author,
         authorUrl: breakChange.authorUrl,
         owner,
-        repo
+        repo,
+        ticketReference: breakChange.ticketReference
       })
       changesFile.push(`- due to [\`${breakChange.sha.substring(0, 7)}\`](${breakChange.url}) - ${subjectFile.output}:\n\n${body}\n`)
       changesVar.push(`- due to [\`${breakChange.sha.substring(0, 7)}\`](${breakChange.url}) - ${subjectVar.output}:\n\n${body}\n`)
@@ -307,7 +337,8 @@ async function main () {
         author: commit.author,
         authorUrl: commit.authorUrl,
         owner,
-        repo
+        repo,
+        ticketReference: commit.ticketReference
       })
       const subjectVar = buildSubject({
         writeToFile: false,
@@ -315,7 +346,8 @@ async function main () {
         author: commit.author,
         authorUrl: commit.authorUrl,
         owner,
-        repo
+        repo,
+        ticketReference: commit.ticketReference
       })
       changesFile.push(`- [\`${commit.sha.substring(0, 7)}\`](${commit.url}) - ${scope}${subjectFile.output}`)
       changesVar.push(`- [\`${commit.sha.substring(0, 7)}\`](${commit.url}) - ${scope}${subjectVar.output}`)
