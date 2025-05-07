@@ -28,24 +28,33 @@ function buildSubject ({ writeToFile, subject, author, authorUrl, owner, repo, t
   const hasPR = rePrEnding.test(subject)
   const prs = []
   let output = subject
-  // If ticketReference exists, prepend it to the subject
+  // If ticketReference exists, prepend it to the subject with a link to Jira
   if (ticketReference) {
-    output = `[${ticketReference}] ${output}`
+    const ticketLink = `[${ticketReference}](https://redventures.atlassian.net/browse/${ticketReference})`
+    output = `${ticketLink} ${output}`
   }
   if (writeToFile) {
     const authorLine = author ? ` by [@${author}](${authorUrl})` : ''
     if (hasPR) {
       const prMatch = subject.match(rePrEnding)
       const msgOnly = subject.slice(0, prMatch[0].length * -1)
-      output = (ticketReference ? `[${ticketReference}] ` : '') + msgOnly.replace(rePrId, (m, prId) => {
+      output = msgOnly.replace(rePrId, (m, prId) => {
         prs.push(prId)
         return `[#${prId}](${githubServerUrl}/${owner}/${repo}/pull/${prId})`
       })
+      if (ticketReference) {
+        const ticketLink = `[${ticketReference}](https://redventures.atlassian.net/browse/${ticketReference})`
+        output = `${ticketLink} ${output}`
+      }
       output += `*(PR [#${prMatch[1]}](${githubServerUrl}/${owner}/${repo}/pull/${prMatch[1]})${authorLine})*`
     } else {
-      output = (ticketReference ? `[${ticketReference}] ` : '') + subject.replace(rePrId, (m, prId) => {
+      output = subject.replace(rePrId, (m, prId) => {
         return `[#${prId}](${githubServerUrl}/${owner}/${repo}/pull/${prId})`
       })
+      if (ticketReference) {
+        const ticketLink = `[${ticketReference}](https://redventures.atlassian.net/browse/${ticketReference})`
+        output = `${ticketLink} ${output}`
+      }
       if (author) {
         output += ` *(commit by [@${author}](${authorUrl}))*`
       }
@@ -59,6 +68,7 @@ function buildSubject ({ writeToFile, subject, author, authorUrl, owner, repo, t
         return prOutput
       })
       if (ticketReference) {
+        // Use plain text format for non-file output
         output = `[${ticketReference}] ${output}`
       }
     } else {
@@ -183,13 +193,16 @@ async function main () {
   const breakingChanges = []
   for (const commit of commits) {
     try {
-      // Check if the commit message matches the COH-123/feat(deps): pattern
+      // First check if the commit message matches the COH-123/feat(deps): pattern (preferred format)
       const cohRegex = /^([A-Z]+-\d+)\/([a-z]+)(\([^)]*\))?:\s(.+)$/;
+      // Alternative regex to find ticket references in other formats
+      const altTicketRegex = /\b([A-Z]+-\d+)\b/;
+      
       let message = commit.commit.message;
-      const cohMatch = message.match(cohRegex);
       let ticketReference = null;
-
-      // If it matches our COH-123/feat(deps): pattern, transform it to conventional commit format
+      
+      // Try primary pattern first (COH-123/feat(deps): format)
+      const cohMatch = message.match(cohRegex);
       if (cohMatch) {
         const [, issueRef, type, scope = '', subject] = cohMatch;
         // Store the ticket reference
@@ -197,6 +210,13 @@ async function main () {
         // Transform to conventional commit format by removing the issue prefix but keep the reference internally
         message = `${type}${scope}: ${subject}`;
         core.info(`[INFO] Transformed commit format from ${commit.commit.message} to ${message}`);
+      } else {
+        // If primary format doesn't match, check for ticket references anywhere in the message
+        const altMatch = message.match(altTicketRegex);
+        if (altMatch) {
+          ticketReference = altMatch[1];
+          core.info(`[INFO] Found ticket reference ${ticketReference} in non-standard commit format`);
+        }
       }
 
       const cAst = cc.toConventionalChangelogFormat(cc.parser(message));
@@ -225,15 +245,16 @@ async function main () {
       core.info(`[OK] Commit ${commit.sha} of type ${cAst.type} - ${cAst.subject}`)
     } catch (err) {
       if (includeInvalidCommits) {
-        // Even for invalid commits, check if it follows our ticket reference pattern
-        const cohRegex = /^([A-Z]+-\d+)\/(.+)$/;
+        // For invalid commits, check for ticket references in various formats
+        const altTicketRegex = /\b([A-Z]+-\d+)\b/;
         const originalMessage = commit.commit.message;
-        const cohMatch = originalMessage.match(cohRegex);
         let ticketReference = null;
         
-        if (cohMatch) {
-          // Extract ticket reference even for invalid conventional commit format
-          ticketReference = cohMatch[1];
+        // Look for ticket references anywhere in the message
+        const altMatch = originalMessage.match(altTicketRegex);
+        if (altMatch) {
+          ticketReference = altMatch[1];
+          core.info(`[INFO] Found ticket reference ${ticketReference} in invalid commit format`);
         }
         
         commitsParsed.push({
